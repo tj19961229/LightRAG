@@ -85,6 +85,7 @@ from lightrag.base import (
     QueryResult,
 )
 from lightrag.namespace import NameSpace
+from lightrag.workspace_context import set_workspace
 from lightrag.operate import (
     chunking_by_token_size,
     extract_entities,
@@ -1119,6 +1120,7 @@ class LightRAG:
         ids: str | list[str] | None = None,
         file_paths: str | list[str] | None = None,
         track_id: str | None = None,
+        workspace: str | None = None,
     ) -> str:
         """Sync Insert documents with checkpoint support
 
@@ -1131,6 +1133,7 @@ class LightRAG:
             ids: single string of the document ID or list of unique document IDs, if not provided, MD5 hash IDs will be generated
             file_paths: single string of the file path or list of file paths, used for citation
             track_id: tracking ID for monitoring processing status, if not provided, will be generated
+            workspace: workspace to use for this operation, if not provided, uses instance workspace
 
         Returns:
             str: tracking ID for monitoring processing status
@@ -1144,6 +1147,7 @@ class LightRAG:
                 ids,
                 file_paths,
                 track_id,
+                workspace,
             )
         )
 
@@ -1155,6 +1159,7 @@ class LightRAG:
         ids: str | list[str] | None = None,
         file_paths: str | list[str] | None = None,
         track_id: str | None = None,
+        workspace: str | None = None,
     ) -> str:
         """Async Insert documents with checkpoint support
 
@@ -1167,6 +1172,7 @@ class LightRAG:
             ids: list of unique document IDs, if not provided, MD5 hash IDs will be generated
             file_paths: list of file paths corresponding to each document, used for citation
             track_id: tracking ID for monitoring processing status, if not provided, will be generated
+            workspace: workspace to use for this operation, if not provided, uses instance workspace
 
         Returns:
             str: tracking ID for monitoring processing status
@@ -1175,10 +1181,12 @@ class LightRAG:
         if track_id is None:
             track_id = generate_track_id("insert")
 
-        await self.apipeline_enqueue_documents(input, ids, file_paths, track_id)
-        await self.apipeline_process_enqueue_documents(
-            split_by_character, split_by_character_only
-        )
+        # Use set_workspace context manager for dynamic workspace switching
+        with set_workspace(workspace or self.workspace):
+            await self.apipeline_enqueue_documents(input, ids, file_paths, track_id)
+            await self.apipeline_process_enqueue_documents(
+                split_by_character, split_by_character_only
+            )
 
         return track_id
 
@@ -2432,6 +2440,7 @@ class LightRAG:
         query: str,
         param: QueryParam = QueryParam(),
         system_prompt: str | None = None,
+        workspace: str | None = None,
     ) -> str | Iterator[str]:
         """
         Perform a sync query.
@@ -2440,19 +2449,21 @@ class LightRAG:
             query (str): The query to be executed.
             param (QueryParam): Configuration parameters for query execution.
             prompt (Optional[str]): Custom prompts for fine-tuned control over the system's behavior. Defaults to None, which uses PROMPTS["rag_response"].
+            workspace: workspace to use for this operation, if not provided, uses instance workspace
 
         Returns:
             str: The result of the query execution.
         """
         loop = always_get_an_event_loop()
 
-        return loop.run_until_complete(self.aquery(query, param, system_prompt))  # type: ignore
+        return loop.run_until_complete(self.aquery(query, param, system_prompt, workspace))  # type: ignore
 
     async def aquery(
         self,
         query: str,
         param: QueryParam = QueryParam(),
         system_prompt: str | None = None,
+        workspace: str | None = None,
     ) -> str | AsyncIterator[str]:
         """
         Perform a async query (backward compatibility wrapper).
@@ -2465,6 +2476,7 @@ class LightRAG:
             param (QueryParam): Configuration parameters for query execution.
                 If param.model_func is provided, it will be used instead of the global model.
             system_prompt (Optional[str]): Custom prompts for fine-tuned control over the system's behavior. Defaults to None, which uses PROMPTS["rag_response"].
+            workspace: workspace to use for this operation, if not provided, uses instance workspace
 
         Returns:
             str | AsyncIterator[str]: The LLM response content.
@@ -2472,7 +2484,7 @@ class LightRAG:
                 - Streaming: Returns AsyncIterator[str]
         """
         # Call the new aquery_llm function to get complete results
-        result = await self.aquery_llm(query, param, system_prompt)
+        result = await self.aquery_llm(query, param, system_prompt, workspace)
 
         # Extract and return only the LLM response for backward compatibility
         llm_response = result.get("llm_response", {})
@@ -2486,6 +2498,7 @@ class LightRAG:
         self,
         query: str,
         param: QueryParam = QueryParam(),
+        workspace: str | None = None,
     ) -> dict[str, Any]:
         """
         Synchronous data retrieval API: returns structured retrieval results without LLM generation.
@@ -2496,17 +2509,19 @@ class LightRAG:
         Args:
             query: Query text for retrieval.
             param: Query parameters controlling retrieval behavior (same as aquery).
+            workspace: workspace to use for this operation, if not provided, uses instance workspace
 
         Returns:
             dict[str, Any]: Same structured data result as aquery_data.
         """
         loop = always_get_an_event_loop()
-        return loop.run_until_complete(self.aquery_data(query, param))
+        return loop.run_until_complete(self.aquery_data(query, param, workspace))
 
     async def aquery_data(
         self,
         query: str,
         param: QueryParam = QueryParam(),
+        workspace: str | None = None,
     ) -> dict[str, Any]:
         """
         Asynchronous data retrieval API: returns structured retrieval results without LLM generation.
@@ -2517,6 +2532,7 @@ class LightRAG:
         Args:
             query: Query text for retrieval.
             param: Query parameters controlling retrieval behavior (same as aquery).
+            workspace: workspace to use for this operation, if not provided, uses instance workspace
 
         Returns:
             dict[str, Any]: Structured data result in the following format:
@@ -2637,84 +2653,88 @@ class LightRAG:
             enable_rerank=param.enable_rerank,
         )
 
-        query_result = None
+        # Use set_workspace context manager for dynamic workspace switching
+        # Use set_workspace context manager for dynamic workspace switching
+        with set_workspace(workspace or self.workspace):
+            query_result = None
 
-        if data_param.mode in ["local", "global", "hybrid", "mix"]:
-            logger.debug(f"[aquery_data] Using kg_query for mode: {data_param.mode}")
-            query_result = await kg_query(
-                query.strip(),
-                self.chunk_entity_relation_graph,
-                self.entities_vdb,
-                self.relationships_vdb,
-                self.text_chunks,
-                data_param,  # Use data_param with only_need_context=True
-                global_config,
-                hashing_kv=self.llm_response_cache,
-                system_prompt=None,
-                chunks_vdb=self.chunks_vdb,
-            )
-        elif data_param.mode == "naive":
-            logger.debug(f"[aquery_data] Using naive_query for mode: {data_param.mode}")
-            query_result = await naive_query(
-                query.strip(),
-                self.chunks_vdb,
-                data_param,  # Use data_param with only_need_context=True
-                global_config,
-                hashing_kv=self.llm_response_cache,
-                system_prompt=None,
-            )
-        elif data_param.mode == "bypass":
-            logger.debug("[aquery_data] Using bypass mode")
-            # bypass mode returns empty data using convert_to_user_format
-            empty_raw_data = convert_to_user_format(
-                [],  # no entities
-                [],  # no relationships
-                [],  # no chunks
-                [],  # no references
-                "bypass",
-            )
-            query_result = QueryResult(content="", raw_data=empty_raw_data)
-        else:
-            raise ValueError(f"Unknown mode {data_param.mode}")
-
-        if query_result is None:
-            no_result_message = "Query returned no results"
-            if data_param.mode == "naive":
-                no_result_message = "No relevant document chunks found."
-            final_data: dict[str, Any] = {
-                "status": "failure",
-                "message": no_result_message,
-                "data": {},
-                "metadata": {
-                    "failure_reason": "no_results",
-                    "mode": data_param.mode,
-                },
-            }
-            logger.info("[aquery_data] Query returned no results.")
-        else:
-            # Extract raw_data from QueryResult
-            final_data = query_result.raw_data or {}
-
-            # Log final result counts - adapt to new data format from convert_to_user_format
-            if final_data and "data" in final_data:
-                data_section = final_data["data"]
-                entities_count = len(data_section.get("entities", []))
-                relationships_count = len(data_section.get("relationships", []))
-                chunks_count = len(data_section.get("chunks", []))
-                logger.debug(
-                    f"[aquery_data] Final result: {entities_count} entities, {relationships_count} relationships, {chunks_count} chunks"
+            if data_param.mode in ["local", "global", "hybrid", "mix"]:
+                logger.debug(f"[aquery_data] Using kg_query for mode: {data_param.mode}")
+                query_result = await kg_query(
+                    query.strip(),
+                    self.chunk_entity_relation_graph,
+                    self.entities_vdb,
+                    self.relationships_vdb,
+                    self.text_chunks,
+                    data_param,  # Use data_param with only_need_context=True
+                    global_config,
+                    hashing_kv=self.llm_response_cache,
+                    system_prompt=None,
+                    chunks_vdb=self.chunks_vdb,
                 )
+            elif data_param.mode == "naive":
+                logger.debug(f"[aquery_data] Using naive_query for mode: {data_param.mode}")
+                query_result = await naive_query(
+                    query.strip(),
+                    self.chunks_vdb,
+                    data_param,  # Use data_param with only_need_context=True
+                    global_config,
+                    hashing_kv=self.llm_response_cache,
+                    system_prompt=None,
+                )
+            elif data_param.mode == "bypass":
+                logger.debug("[aquery_data] Using bypass mode")
+                # bypass mode returns empty data using convert_to_user_format
+                empty_raw_data = convert_to_user_format(
+                    [],  # no entities
+                    [],  # no relationships
+                    [],  # no chunks
+                    [],  # no references
+                    "bypass",
+                )
+                query_result = QueryResult(content="", raw_data=empty_raw_data)
             else:
-                logger.warning("[aquery_data] No data section found in query result")
+                raise ValueError(f"Unknown mode {data_param.mode}")
 
-        await self._query_done()
-        return final_data
+            if query_result is None:
+                no_result_message = "Query returned no results"
+                if data_param.mode == "naive":
+                    no_result_message = "No relevant document chunks found."
+                final_data: dict[str, Any] = {
+                    "status": "failure",
+                    "message": no_result_message,
+                    "data": {},
+                    "metadata": {
+                        "failure_reason": "no_results",
+                        "mode": data_param.mode,
+                    },
+                }
+                logger.info("[aquery_data] Query returned no results.")
+            else:
+                # Extract raw_data from QueryResult
+                final_data = query_result.raw_data or {}
+
+                # Log final result counts - adapt to new data format from convert_to_user_format
+                if final_data and "data" in final_data:
+                    data_section = final_data["data"]
+                    entities_count = len(data_section.get("entities", []))
+                    relationships_count = len(data_section.get("relationships", []))
+                    chunks_count = len(data_section.get("chunks", []))
+                    logger.debug(
+                        f"[aquery_data] Final result: {entities_count} entities, {relationships_count} relationships, {chunks_count} chunks"
+                    )
+                else:
+                    logger.warning("[aquery_data] No data section found in query result")
+
+            await self._query_done()
+            return final_data
 
     async def aquery_llm(
         self,
         query: str,
         param: QueryParam = QueryParam(),
         system_prompt: str | None = None,
+        workspace: str | None = None,
     ) -> dict[str, Any]:
         """
         Asynchronous complete query API: returns structured retrieval results with LLM generation.
@@ -2726,6 +2746,7 @@ class LightRAG:
             query: Query text for retrieval and LLM generation.
             param: Query parameters controlling retrieval and LLM behavior.
             system_prompt: Optional custom system prompt for LLM generation.
+            workspace: workspace to use for this operation, if not provided, uses instance workspace
 
         Returns:
             dict[str, Any]: Complete response with structured data and LLM response.
@@ -2734,125 +2755,128 @@ class LightRAG:
 
         global_config = asdict(self)
 
-        try:
-            query_result = None
+        # Use set_workspace context manager for dynamic workspace switching
+        with set_workspace(workspace or self.workspace):
+            try:
+                query_result = None
 
-            if param.mode in ["local", "global", "hybrid", "mix"]:
-                query_result = await kg_query(
-                    query.strip(),
-                    self.chunk_entity_relation_graph,
-                    self.entities_vdb,
-                    self.relationships_vdb,
-                    self.text_chunks,
-                    param,
-                    global_config,
-                    hashing_kv=self.llm_response_cache,
-                    system_prompt=system_prompt,
-                    chunks_vdb=self.chunks_vdb,
-                )
-            elif param.mode == "naive":
-                query_result = await naive_query(
-                    query.strip(),
-                    self.chunks_vdb,
-                    param,
-                    global_config,
-                    hashing_kv=self.llm_response_cache,
-                    system_prompt=system_prompt,
-                )
-            elif param.mode == "bypass":
-                # Bypass mode: directly use LLM without knowledge retrieval
-                use_llm_func = param.model_func or global_config["llm_model_func"]
-                # Apply higher priority (8) to entity/relation summary tasks
-                use_llm_func = partial(use_llm_func, _priority=8)
+                if param.mode in ["local", "global", "hybrid", "mix"]:
+                    query_result = await kg_query(
+                        query.strip(),
+                        self.chunk_entity_relation_graph,
+                        self.entities_vdb,
+                        self.relationships_vdb,
+                        self.text_chunks,
+                        param,
+                        global_config,
+                        hashing_kv=self.llm_response_cache,
+                        system_prompt=system_prompt,
+                        chunks_vdb=self.chunks_vdb,
+                    )
+                elif param.mode == "naive":
+                    query_result = await naive_query(
+                        query.strip(),
+                        self.chunks_vdb,
+                        param,
+                        global_config,
+                        hashing_kv=self.llm_response_cache,
+                        system_prompt=system_prompt,
+                    )
+                elif param.mode == "bypass":
+                    # Bypass mode: directly use LLM without knowledge retrieval
+                    use_llm_func = param.model_func or global_config["llm_model_func"]
+                    # Apply higher priority (8) to entity/relation summary tasks
+                    use_llm_func = partial(use_llm_func, _priority=8)
 
-                param.stream = True if param.stream is None else param.stream
-                response = await use_llm_func(
-                    query.strip(),
-                    system_prompt=system_prompt,
-                    history_messages=param.conversation_history,
-                    enable_cot=True,
-                    stream=param.stream,
-                )
-                if type(response) is str:
+                    param.stream = True if param.stream is None else param.stream
+                    response = await use_llm_func(
+                        query.strip(),
+                        system_prompt=system_prompt,
+                        history_messages=param.conversation_history,
+                        enable_cot=True,
+                        stream=param.stream,
+                    )
+                    if type(response) is str:
+                        return {
+                            "status": "success",
+                            "message": "Bypass mode LLM non streaming response",
+                            "data": {},
+                            "metadata": {},
+                            "llm_response": {
+                                "content": response,
+                                "response_iterator": None,
+                                "is_streaming": False,
+                            },
+                        }
+                    else:
+                        return {
+                            "status": "success",
+                            "message": "Bypass mode LLM streaming response",
+                            "data": {},
+                            "metadata": {},
+                            "llm_response": {
+                                "content": None,
+                                "response_iterator": response,
+                                "is_streaming": True,
+                            },
+                        }
+                else:
+                    raise ValueError(f"Unknown mode {param.mode}")
+
+                await self._query_done()
+
+                # Check if query_result is None
+                if query_result is None:
                     return {
-                        "status": "success",
-                        "message": "Bypass mode LLM non streaming response",
+                        "status": "failure",
+                        "message": "Query returned no results",
                         "data": {},
-                        "metadata": {},
+                        "metadata": {
+                            "failure_reason": "no_results",
+                            "mode": param.mode,
+                        },
                         "llm_response": {
-                            "content": response,
+                            "content": PROMPTS["fail_response"],
                             "response_iterator": None,
                             "is_streaming": False,
                         },
                     }
-                else:
-                    return {
-                        "status": "success",
-                        "message": "Bypass mode LLM streaming response",
-                        "data": {},
-                        "metadata": {},
-                        "llm_response": {
-                            "content": None,
-                            "response_iterator": response,
-                            "is_streaming": True,
-                        },
-                    }
-            else:
-                raise ValueError(f"Unknown mode {param.mode}")
 
-            await self._query_done()
+                # Extract structured data from query result
+                raw_data = query_result.raw_data or {}
+                raw_data["llm_response"] = {
+                    "content": query_result.content
+                    if not query_result.is_streaming
+                    else None,
+                    "response_iterator": query_result.response_iterator
+                    if query_result.is_streaming
+                    else None,
+                    "is_streaming": query_result.is_streaming,
+                }
 
-            # Check if query_result is None
-            if query_result is None:
+                return raw_data
+
+            except Exception as e:
+                logger.error(f"Query failed: {e}")
+                # Return error response
                 return {
                     "status": "failure",
-                    "message": "Query returned no results",
+                    "message": f"Query failed: {str(e)}",
                     "data": {},
-                    "metadata": {
-                        "failure_reason": "no_results",
-                        "mode": param.mode,
-                    },
+                    "metadata": {},
                     "llm_response": {
-                        "content": PROMPTS["fail_response"],
+                        "content": None,
                         "response_iterator": None,
                         "is_streaming": False,
                     },
                 }
-
-            # Extract structured data from query result
-            raw_data = query_result.raw_data or {}
-            raw_data["llm_response"] = {
-                "content": query_result.content
-                if not query_result.is_streaming
-                else None,
-                "response_iterator": query_result.response_iterator
-                if query_result.is_streaming
-                else None,
-                "is_streaming": query_result.is_streaming,
-            }
-
-            return raw_data
-
-        except Exception as e:
-            logger.error(f"Query failed: {e}")
-            # Return error response
-            return {
-                "status": "failure",
-                "message": f"Query failed: {str(e)}",
-                "data": {},
-                "metadata": {},
-                "llm_response": {
-                    "content": None,
-                    "response_iterator": None,
-                    "is_streaming": False,
-                },
-            }
 
     def query_llm(
         self,
         query: str,
         param: QueryParam = QueryParam(),
         system_prompt: str | None = None,
+        workspace: str | None = None,
     ) -> dict[str, Any]:
         """
         Synchronous complete query API: returns structured retrieval results with LLM generation.
@@ -2864,12 +2888,13 @@ class LightRAG:
             query: Query text for retrieval and LLM generation.
             param: Query parameters controlling retrieval and LLM behavior.
             system_prompt: Optional custom system prompt for LLM generation.
+            workspace: workspace to use for this operation, if not provided, uses instance workspace
 
         Returns:
             dict[str, Any]: Same complete response format as aquery_llm.
         """
         loop = always_get_an_event_loop()
-        return loop.run_until_complete(self.aquery_llm(query, param, system_prompt))
+        return loop.run_until_complete(self.aquery_llm(query, param, system_prompt, workspace))
 
     async def _query_done(self):
         await self.llm_response_cache.index_done_callback()

@@ -35,6 +35,7 @@ from ..base import (
 from ..exceptions import DataMigrationError
 from ..namespace import NameSpace, is_namespace
 from ..utils import logger
+from ..workspace_context import get_effective_workspace
 from ..kg.shared_storage import get_data_init_lock
 
 import pipmaster as pm
@@ -1872,6 +1873,11 @@ class ClientManager:
 class PGKVStorage(BaseKVStorage):
     db: PostgreSQLDB = field(default=None)
 
+    @property
+    def effective_workspace(self) -> str:
+        """Get effective workspace from context or fall back to instance workspace."""
+        return get_effective_workspace(self.workspace)
+
     def __post_init__(self):
         self._max_batch_size = self.global_config["embedding_batch_num"]
 
@@ -1903,7 +1909,7 @@ class PGKVStorage(BaseKVStorage):
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
         """Get data by id."""
         sql = SQL_TEMPLATES["get_by_id_" + self.namespace]
-        params = {"workspace": self.workspace, "id": id}
+        params = {"workspace": self.effective_workspace, "id": id}
         response = await self.db.query(sql, list(params.values()))
 
         if response and is_namespace(self.namespace, NameSpace.KV_STORE_TEXT_CHUNKS):
@@ -2016,7 +2022,7 @@ class PGKVStorage(BaseKVStorage):
             return []
 
         sql = SQL_TEMPLATES["get_by_ids_" + self.namespace]
-        params = {"workspace": self.workspace, "ids": ids}
+        params = {"workspace": self.effective_workspace, "ids": ids}
         results = await self.db.query(sql, list(params.values()), multirows=True)
 
         def _order_results(
@@ -2156,7 +2162,7 @@ class PGKVStorage(BaseKVStorage):
 
         table_name = namespace_to_table_name(self.namespace)
         sql = f"SELECT id FROM {table_name} WHERE workspace=$1 AND id = ANY($2)"
-        params = {"workspace": self.workspace, "ids": list(keys)}
+        params = {"workspace": self.effective_workspace, "ids": list(keys)}
         try:
             res = await self.db.query(sql, list(params.values()), multirows=True)
             if res:
@@ -2183,7 +2189,7 @@ class PGKVStorage(BaseKVStorage):
             for k, v in data.items():
                 upsert_sql = SQL_TEMPLATES["upsert_text_chunk"]
                 _data = {
-                    "workspace": self.workspace,
+                    "workspace": self.effective_workspace,
                     "id": k,
                     "tokens": v["tokens"],
                     "chunk_order_index": v["chunk_order_index"],
@@ -2202,14 +2208,14 @@ class PGKVStorage(BaseKVStorage):
                     "id": k,
                     "content": v["content"],
                     "doc_name": v.get("file_path", ""),  # Map file_path to doc_name
-                    "workspace": self.workspace,
+                    "workspace": self.effective_workspace,
                 }
                 await self.db.execute(upsert_sql, _data)
         elif is_namespace(self.namespace, NameSpace.KV_STORE_LLM_RESPONSE_CACHE):
             for k, v in data.items():
                 upsert_sql = SQL_TEMPLATES["upsert_llm_response_cache"]
                 _data = {
-                    "workspace": self.workspace,
+                    "workspace": self.effective_workspace,
                     "id": k,  # Use flattened key as id
                     "original_prompt": v["original_prompt"],
                     "return_value": v["return"],
@@ -2229,7 +2235,7 @@ class PGKVStorage(BaseKVStorage):
             for k, v in data.items():
                 upsert_sql = SQL_TEMPLATES["upsert_full_entities"]
                 _data = {
-                    "workspace": self.workspace,
+                    "workspace": self.effective_workspace,
                     "id": k,
                     "entity_names": json.dumps(v["entity_names"]),
                     "count": v["count"],
@@ -2243,7 +2249,7 @@ class PGKVStorage(BaseKVStorage):
             for k, v in data.items():
                 upsert_sql = SQL_TEMPLATES["upsert_full_relations"]
                 _data = {
-                    "workspace": self.workspace,
+                    "workspace": self.effective_workspace,
                     "id": k,
                     "relation_pairs": json.dumps(v["relation_pairs"]),
                     "count": v["count"],
@@ -2257,7 +2263,7 @@ class PGKVStorage(BaseKVStorage):
             for k, v in data.items():
                 upsert_sql = SQL_TEMPLATES["upsert_entity_chunks"]
                 _data = {
-                    "workspace": self.workspace,
+                    "workspace": self.effective_workspace,
                     "id": k,
                     "chunk_ids": json.dumps(v["chunk_ids"]),
                     "count": v["count"],
@@ -2271,7 +2277,7 @@ class PGKVStorage(BaseKVStorage):
             for k, v in data.items():
                 upsert_sql = SQL_TEMPLATES["upsert_relation_chunks"]
                 _data = {
-                    "workspace": self.workspace,
+                    "workspace": self.effective_workspace,
                     "id": k,
                     "chunk_ids": json.dumps(v["chunk_ids"]),
                     "count": v["count"],
@@ -2300,7 +2306,7 @@ class PGKVStorage(BaseKVStorage):
         sql = f"SELECT EXISTS(SELECT 1 FROM {table_name} WHERE workspace=$1 LIMIT 1) as has_data"
 
         try:
-            result = await self.db.query(sql, [self.workspace])
+            result = await self.db.query(sql, [self.effective_workspace])
             return not result.get("has_data", False) if result else True
         except Exception as e:
             logger.error(f"[{self.workspace}] Error checking if storage is empty: {e}")
@@ -2328,7 +2334,7 @@ class PGKVStorage(BaseKVStorage):
         delete_sql = f"DELETE FROM {table_name} WHERE workspace=$1 AND id = ANY($2)"
 
         try:
-            await self.db.execute(delete_sql, {"workspace": self.workspace, "ids": ids})
+            await self.db.execute(delete_sql, {"workspace": self.effective_workspace, "ids": ids})
             logger.debug(
                 f"[{self.workspace}] Successfully deleted {len(ids)} records from {self.namespace}"
             )
@@ -2350,7 +2356,7 @@ class PGKVStorage(BaseKVStorage):
             drop_sql = SQL_TEMPLATES["drop_specifiy_table_workspace"].format(
                 table_name=table_name
             )
-            await self.db.execute(drop_sql, {"workspace": self.workspace})
+            await self.db.execute(drop_sql, {"workspace": self.effective_workspace})
             return {"status": "success", "message": "data dropped"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
@@ -2360,6 +2366,11 @@ class PGKVStorage(BaseKVStorage):
 @dataclass
 class PGVectorStorage(BaseVectorStorage):
     db: PostgreSQLDB | None = field(default=None)
+
+    @property
+    def effective_workspace(self) -> str:
+        """Get effective workspace from context or fall back to instance workspace."""
+        return get_effective_workspace(self.workspace)
 
     def __post_init__(self):
         self._validate_embedding_func()
@@ -2832,7 +2843,7 @@ class PGVectorStorage(BaseVectorStorage):
             await PGVectorStorage.setup_table(
                 self.db,
                 self.table_name,
-                self.workspace,  # CRITICAL: Filter migration by workspace
+                self.effective_workspace,  # CRITICAL: Filter migration by workspace
                 embedding_dim=self.embedding_func.embedding_dim,
                 legacy_table_name=self.legacy_table_name,
                 base_table=self.legacy_table_name,  # base_table for DDL template lookup
@@ -2857,7 +2868,7 @@ class PGVectorStorage(BaseVectorStorage):
             )
             # Return tuple in the exact order of SQL parameters ($1, $2, ...)
             values: tuple[Any, ...] = (
-                self.workspace,  # $1
+                self.effective_workspace,  # $1
                 item["__id__"],  # $2
                 item["tokens"],  # $3
                 item["chunk_order_index"],  # $4
@@ -2893,7 +2904,7 @@ class PGVectorStorage(BaseVectorStorage):
 
         # Return tuple in the exact order of SQL parameters ($1, $2, ...)
         values: tuple[Any, ...] = (
-            self.workspace,  # $1
+            self.effective_workspace,  # $1
             item["__id__"],  # $2
             item["entity_name"],  # $3
             item["content"],  # $4
@@ -2924,7 +2935,7 @@ class PGVectorStorage(BaseVectorStorage):
 
         # Return tuple in the exact order of SQL parameters ($1, $2, ...)
         values: tuple[Any, ...] = (
-            self.workspace,  # $1
+            self.effective_workspace,  # $1
             item["__id__"],  # $2
             item["src_id"],  # $3
             item["tgt_id"],  # $4
@@ -3010,7 +3021,7 @@ class PGVectorStorage(BaseVectorStorage):
             embedding_string=embedding_string, table_name=self.table_name
         )
         params = {
-            "workspace": self.workspace,
+            "workspace": self.effective_workspace,
             "closer_than_threshold": 1 - self.cosine_better_than_threshold,
             "top_k": top_k,
         }
@@ -3035,7 +3046,7 @@ class PGVectorStorage(BaseVectorStorage):
         )
 
         try:
-            await self.db.execute(delete_sql, {"workspace": self.workspace, "ids": ids})
+            await self.db.execute(delete_sql, {"workspace": self.effective_workspace, "ids": ids})
             logger.debug(
                 f"[{self.workspace}] Successfully deleted {len(ids)} vectors from {self.namespace}"
             )
@@ -3056,7 +3067,7 @@ class PGVectorStorage(BaseVectorStorage):
                             WHERE workspace=$1 AND entity_name=$2"""
 
             await self.db.execute(
-                delete_sql, {"workspace": self.workspace, "entity_name": entity_name}
+                delete_sql, {"workspace": self.effective_workspace, "entity_name": entity_name}
             )
             logger.debug(
                 f"[{self.workspace}] Successfully deleted entity {entity_name}"
@@ -3076,7 +3087,7 @@ class PGVectorStorage(BaseVectorStorage):
                             WHERE workspace=$1 AND (source_id=$2 OR target_id=$2)"""
 
             await self.db.execute(
-                delete_sql, {"workspace": self.workspace, "entity_name": entity_name}
+                delete_sql, {"workspace": self.effective_workspace, "entity_name": entity_name}
             )
             logger.debug(
                 f"[{self.workspace}] Successfully deleted relations for entity {entity_name}"
@@ -3096,7 +3107,7 @@ class PGVectorStorage(BaseVectorStorage):
             The vector data if found, or None if not found
         """
         query = f"SELECT *, EXTRACT(EPOCH FROM create_time)::BIGINT as created_at FROM {self.table_name} WHERE workspace=$1 AND id=$2"
-        params = {"workspace": self.workspace, "id": id}
+        params = {"workspace": self.effective_workspace, "id": id}
 
         try:
             result = await self.db.query(query, list(params.values()))
@@ -3123,7 +3134,7 @@ class PGVectorStorage(BaseVectorStorage):
 
         ids_str = ",".join([f"'{id}'" for id in ids])
         query = f"SELECT *, EXTRACT(EPOCH FROM create_time)::BIGINT as created_at FROM {self.table_name} WHERE workspace=$1 AND id IN ({ids_str})"
-        params = {"workspace": self.workspace}
+        params = {"workspace": self.effective_workspace}
 
         try:
             results = await self.db.query(query, list(params.values()), multirows=True)
@@ -3165,7 +3176,7 @@ class PGVectorStorage(BaseVectorStorage):
 
         ids_str = ",".join([f"'{id}'" for id in ids])
         query = f"SELECT id, content_vector FROM {self.table_name} WHERE workspace=$1 AND id IN ({ids_str})"
-        params = {"workspace": self.workspace}
+        params = {"workspace": self.effective_workspace}
 
         try:
             results = await self.db.query(query, list(params.values()), multirows=True)
@@ -3204,7 +3215,7 @@ class PGVectorStorage(BaseVectorStorage):
             drop_sql = SQL_TEMPLATES["drop_specifiy_table_workspace"].format(
                 table_name=self.table_name
             )
-            await self.db.execute(drop_sql, {"workspace": self.workspace})
+            await self.db.execute(drop_sql, {"workspace": self.effective_workspace})
             return {"status": "success", "message": "data dropped"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
@@ -3214,6 +3225,11 @@ class PGVectorStorage(BaseVectorStorage):
 @dataclass
 class PGDocStatusStorage(DocStatusStorage):
     db: PostgreSQLDB = field(default=None)
+
+    @property
+    def effective_workspace(self) -> str:
+        """Get effective workspace from context or fall back to instance workspace."""
+        return get_effective_workspace(self.workspace)
 
     def _format_datetime_with_timezone(self, dt):
         """Convert datetime to ISO format string with timezone info"""
@@ -3259,7 +3275,7 @@ class PGDocStatusStorage(DocStatusStorage):
 
         table_name = namespace_to_table_name(self.namespace)
         sql = f"SELECT id FROM {table_name} WHERE workspace=$1 AND id = ANY($2)"
-        params = {"workspace": self.workspace, "ids": list(keys)}
+        params = {"workspace": self.effective_workspace, "ids": list(keys)}
         try:
             res = await self.db.query(sql, list(params.values()), multirows=True)
             if res:
@@ -3278,7 +3294,7 @@ class PGDocStatusStorage(DocStatusStorage):
 
     async def get_by_id(self, id: str) -> Union[dict[str, Any], None]:
         sql = "select * from LIGHTRAG_DOC_STATUS where workspace=$1 and id=$2"
-        params = {"workspace": self.workspace, "id": id}
+        params = {"workspace": self.effective_workspace, "id": id}
         result = await self.db.query(sql, list(params.values()), True)
         if result is None or result == []:
             return None
@@ -3323,7 +3339,7 @@ class PGDocStatusStorage(DocStatusStorage):
             return []
 
         sql = "SELECT * FROM LIGHTRAG_DOC_STATUS WHERE workspace=$1 AND id = ANY($2)"
-        params = {"workspace": self.workspace, "ids": ids}
+        params = {"workspace": self.effective_workspace, "ids": ids}
 
         results = await self.db.query(sql, list(params.values()), True)
 
@@ -3383,7 +3399,7 @@ class PGDocStatusStorage(DocStatusStorage):
             Returns the same format as get_by_id method
         """
         sql = "select * from LIGHTRAG_DOC_STATUS where workspace=$1 and file_path=$2"
-        params = {"workspace": self.workspace, "file_path": file_path}
+        params = {"workspace": self.effective_workspace, "file_path": file_path}
         result = await self.db.query(sql, list(params.values()), True)
 
         if result is None or result == []:
@@ -3429,7 +3445,7 @@ class PGDocStatusStorage(DocStatusStorage):
                    FROM LIGHTRAG_DOC_STATUS
                   where workspace=$1 GROUP BY STATUS
                  """
-        params = {"workspace": self.workspace}
+        params = {"workspace": self.effective_workspace}
         result = await self.db.query(sql, list(params.values()), True)
         counts = {}
         for doc in result:
@@ -3441,7 +3457,7 @@ class PGDocStatusStorage(DocStatusStorage):
     ) -> dict[str, DocProcessingStatus]:
         """all documents with a specific status"""
         sql = "select * from LIGHTRAG_DOC_STATUS where workspace=$1 and status=$2"
-        params = {"workspace": self.workspace, "status": status.value}
+        params = {"workspace": self.effective_workspace, "status": status.value}
         result = await self.db.query(sql, list(params.values()), True)
 
         docs_by_status = {}
@@ -3495,7 +3511,7 @@ class PGDocStatusStorage(DocStatusStorage):
     ) -> dict[str, DocProcessingStatus]:
         """Get all documents with a specific track_id"""
         sql = "select * from LIGHTRAG_DOC_STATUS where workspace=$1 and track_id=$2"
-        params = {"workspace": self.workspace, "track_id": track_id}
+        params = {"workspace": self.effective_workspace, "track_id": track_id}
         result = await self.db.query(sql, list(params.values()), True)
 
         docs_by_track_id = {}
@@ -3587,7 +3603,7 @@ class PGDocStatusStorage(DocStatusStorage):
         offset = (page - 1) * page_size
 
         # Build parameterized query components
-        params = {"workspace": self.workspace}
+        params = {"workspace": self.effective_workspace}
         param_count = 1
 
         # Build WHERE clause with parameterized query
@@ -3672,7 +3688,7 @@ class PGDocStatusStorage(DocStatusStorage):
             WHERE workspace=$1
             GROUP BY status
         """
-        params = {"workspace": self.workspace}
+        params = {"workspace": self.effective_workspace}
         result = await self.db.query(sql, list(params.values()), True)
 
         counts = {}
@@ -3706,7 +3722,7 @@ class PGDocStatusStorage(DocStatusStorage):
         sql = f"SELECT EXISTS(SELECT 1 FROM {table_name} WHERE workspace=$1 LIMIT 1) as has_data"
 
         try:
-            result = await self.db.query(sql, [self.workspace])
+            result = await self.db.query(sql, [self.effective_workspace])
             return not result.get("has_data", False) if result else True
         except Exception as e:
             logger.error(f"[{self.workspace}] Error checking if storage is empty: {e}")
@@ -3734,7 +3750,7 @@ class PGDocStatusStorage(DocStatusStorage):
         delete_sql = f"DELETE FROM {table_name} WHERE workspace=$1 AND id = ANY($2)"
 
         try:
-            await self.db.execute(delete_sql, {"workspace": self.workspace, "ids": ids})
+            await self.db.execute(delete_sql, {"workspace": self.effective_workspace, "ids": ids})
             logger.debug(
                 f"[{self.workspace}] Successfully deleted {len(ids)} records from {self.namespace}"
             )
@@ -3805,7 +3821,7 @@ class PGDocStatusStorage(DocStatusStorage):
             await self.db.execute(
                 sql,
                 {
-                    "workspace": self.workspace,
+                    "workspace": self.effective_workspace,
                     "id": k,
                     "content_summary": v["content_summary"],
                     "content_length": v["content_length"],
@@ -3836,7 +3852,7 @@ class PGDocStatusStorage(DocStatusStorage):
             drop_sql = SQL_TEMPLATES["drop_specifiy_table_workspace"].format(
                 table_name=table_name
             )
-            await self.db.execute(drop_sql, {"workspace": self.workspace})
+            await self.db.execute(drop_sql, {"workspace": self.effective_workspace})
             return {"status": "success", "message": "data dropped"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
@@ -3863,6 +3879,11 @@ class PGGraphQueryException(Exception):
 @final
 @dataclass
 class PGGraphStorage(BaseGraphStorage):
+    @property
+    def effective_workspace(self) -> str:
+        """Get effective workspace from context or fall back to instance workspace."""
+        return get_effective_workspace(self.workspace)
+
     def __post_init__(self):
         # Graph name will be dynamically generated in initialize() based on workspace
         self.db: PostgreSQLDB | None = None
@@ -3880,7 +3901,7 @@ class PGGraphStorage(BaseGraphStorage):
         Returns:
             str: The graph name for the current workspace
         """
-        workspace = self.workspace
+        workspace = self.effective_workspace
         namespace = self.namespace
 
         if workspace and workspace.strip() and workspace.strip().lower() != "default":

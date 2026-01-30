@@ -5765,7 +5765,9 @@ SQL_TEMPLATES = {
               SELECT c.id,
                      c.content,
                      c.file_path,
-                     EXTRACT(EPOCH FROM c.create_time)::BIGINT AS created_at
+                     c.full_doc_id,
+                     EXTRACT(EPOCH FROM c.create_time)::BIGINT AS created_at,
+                     (1 - (c.content_vector <=> '[{embedding_string}]'::vector)) AS distance
               FROM {table_name} c
               WHERE c.workspace = $1
                 AND c.content_vector <=> '[{embedding_string}]'::vector < $2

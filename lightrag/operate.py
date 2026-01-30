@@ -3408,6 +3408,8 @@ async def _get_vector_context(
                     "file_path": result.get("file_path", "unknown_source"),
                     "source_type": "vector",  # Mark the source type
                     "chunk_id": result.get("id"),  # Add chunk_id for deduplication
+                    "full_doc_id": result.get("full_doc_id"),  # Add doc_id for deletion
+                    "distance": result.get("distance", 0.0),  # Add cosine similarity for dedup
                 }
                 valid_chunks.append(chunk_with_metadata)
 

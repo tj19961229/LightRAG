@@ -17,6 +17,7 @@ from ..utils import logger
 from ..base import BaseGraphStorage
 from ..types import KnowledgeGraph, KnowledgeGraphNode, KnowledgeGraphEdge
 from ..kg.shared_storage import get_data_init_lock
+from ..workspace_context import get_effective_workspace
 import pipmaster as pm
 
 if not pm.is_installed("neo4j"):
@@ -91,8 +92,8 @@ class Neo4JStorage(BaseGraphStorage):
         self._driver = None
 
     def _get_workspace_label(self) -> str:
-        """Return workspace label (guaranteed non-empty during initialization)"""
-        return self.workspace
+        """Return workspace label, preferring dynamic context over instance default."""
+        return get_effective_workspace(self.workspace)
 
     def _normalize_index_suffix(self, workspace_label: str) -> str:
         """Normalize workspace label for safe use in index names."""
@@ -1726,6 +1727,15 @@ class Neo4JStorage(BaseGraphStorage):
         is_chinese = self._is_chinese_text(query_strip)
         index_name = self._get_fulltext_index_name(workspace_label)
 
+        # Escape Lucene special characters to prevent ParseException
+        # Characters: + - && || ! ( ) { } [ ] ^ " ~ * ? : \ /
+        lucene_special = set(r'+-&|!(){}[]^"~*?:\/')
+        escaped_query = "".join(
+            f"\\{ch}" if ch in lucene_special else ch for ch in query_strip
+        ).strip()
+        if not escaped_query:
+            return []
+
         # Attempt to use the full-text index first
         try:
             async with self._driver.session(
@@ -1749,7 +1759,7 @@ class Neo4JStorage(BaseGraphStorage):
                     LIMIT $limit
                     """
                     # For Chinese, don't add wildcard as it may not work properly with CJK analyzer
-                    search_query = query_strip
+                    search_query = escaped_query
                 else:
                     # For non-Chinese text, use the original logic with wildcard
                     cypher_query = f"""
@@ -1768,7 +1778,7 @@ class Neo4JStorage(BaseGraphStorage):
                     ORDER BY final_score DESC, label ASC
                     LIMIT $limit
                     """
-                    search_query = f"{query_strip}*"
+                    search_query = f"{escaped_query}*"
 
                 result = await session.run(
                     cypher_query,

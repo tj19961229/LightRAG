@@ -141,7 +141,6 @@ class QueryParam:
     Format: [{"role": "user/assistant", "content": "message"}].
     """
 
-    # TODO: deprecated. No longer used in the codebase, all conversation_history messages is send to LLM
     history_turns: int = int(os.getenv("HISTORY_TURNS", str(DEFAULT_HISTORY_TURNS)))
     """Number of complete conversation turns (user-assistant pairs) to consider in the response context."""
 

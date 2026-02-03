@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import traceback
 import asyncio
-import configparser
 import inspect
 import os
 import time
@@ -120,10 +119,6 @@ from dotenv import load_dotenv
 # allows to use different .env file for each lightrag instance
 # the OS environment variables take precedence over the .env file
 load_dotenv(dotenv_path=".env", override=False)
-
-# TODO: TO REMOVE @Yannick
-config = configparser.ConfigParser()
-config.read("config.ini", "utf-8")
 
 
 @final
@@ -1189,78 +1184,6 @@ class LightRAG:
             )
 
         return track_id
-
-    # TODO: deprecated, use insert instead
-    def insert_custom_chunks(
-        self,
-        full_text: str,
-        text_chunks: list[str],
-        doc_id: str | list[str] | None = None,
-    ) -> None:
-        loop = always_get_an_event_loop()
-        loop.run_until_complete(
-            self.ainsert_custom_chunks(full_text, text_chunks, doc_id)
-        )
-
-    # TODO: deprecated, use ainsert instead
-    async def ainsert_custom_chunks(
-        self, full_text: str, text_chunks: list[str], doc_id: str | None = None
-    ) -> None:
-        update_storage = False
-        try:
-            # Clean input texts
-            full_text = sanitize_text_for_encoding(full_text)
-            text_chunks = [sanitize_text_for_encoding(chunk) for chunk in text_chunks]
-            file_path = ""
-
-            # Process cleaned texts
-            if doc_id is None:
-                doc_key = compute_mdhash_id(full_text, prefix="doc-")
-            else:
-                doc_key = doc_id
-            new_docs = {doc_key: {"content": full_text, "file_path": file_path}}
-
-            _add_doc_keys = await self.full_docs.filter_keys({doc_key})
-            new_docs = {k: v for k, v in new_docs.items() if k in _add_doc_keys}
-            if not len(new_docs):
-                logger.warning("This document is already in the storage.")
-                return
-
-            update_storage = True
-            logger.info(f"Inserting {len(new_docs)} docs")
-
-            inserting_chunks: dict[str, Any] = {}
-            for index, chunk_text in enumerate(text_chunks):
-                chunk_key = compute_mdhash_id(chunk_text, prefix="chunk-")
-                tokens = len(self.tokenizer.encode(chunk_text))
-                inserting_chunks[chunk_key] = {
-                    "content": chunk_text,
-                    "full_doc_id": doc_key,
-                    "tokens": tokens,
-                    "chunk_order_index": index,
-                    "file_path": file_path,
-                }
-
-            doc_ids = set(inserting_chunks.keys())
-            add_chunk_keys = await self.text_chunks.filter_keys(doc_ids)
-            inserting_chunks = {
-                k: v for k, v in inserting_chunks.items() if k in add_chunk_keys
-            }
-            if not len(inserting_chunks):
-                logger.warning("All chunks are already in the storage.")
-                return
-
-            tasks = [
-                self.chunks_vdb.upsert(inserting_chunks),
-                self._process_extract_entities(inserting_chunks),
-                self.full_docs.upsert(new_docs),
-                self.text_chunks.upsert(inserting_chunks),
-            ]
-            await asyncio.gather(*tasks)
-
-        finally:
-            if update_storage:
-                await self._insert_done()
 
     async def apipeline_enqueue_documents(
         self,

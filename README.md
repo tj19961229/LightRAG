@@ -52,13 +52,24 @@
 ---
 
 <div align="center">
-  <a href="https://litewrite.ai" target="_blank">
-    <img src="./assets/LiteWrite.png" width="56" height="56" alt="LiteWrite" style="vertical-align: middle; border-radius: 12px;">
-    <span style="font-size: 18px; font-weight: bold; margin-left: 10px;">Try LiteWrite — AI-Native LaTeX Editor Platform</span>
-  </a>
-  <br>
-  <a href="https://litewrite.ai"><img src="https://img.shields.io/badge/🚀%20LiteWrite-AI%20Native%20LaTeX%20Editor-ff6b6b?style=for-the-badge&logoColor=white&labelColor=1a1a2e"></a>
+  <table>
+    <tr>
+      <td style="vertical-align: middle;">
+        <img src="./assets/LiteWrite.png"
+             width="56"
+             height="56"
+             alt="LiteWrite"
+             style="border-radius: 12px;" />
+      </td>
+      <td style="vertical-align: middle; padding-left: 12px;">
+        <a href="https://litewrite.ai">
+          <img src="https://img.shields.io/badge/🚀%20LiteWrite-AI%20Native%20LaTeX%20Editor-ff6b6b?style=for-the-badge&logoColor=white&labelColor=1a1a2e">
+        </a>
+      </td>
+    </tr>
+  </table>
 </div>
+
 
 ---
 
@@ -110,12 +121,15 @@ The LightRAG Server is designed to provide Web UI and API support. The Web UI fa
 * Install from PyPI
 
 ```bash
-# Using uv (recommended)
-uv pip install "lightrag-hku[api]"
-# Or using pip
+### Install LightRAG Server as tool using uv (recommended)
+uv tool install "lightrag-hku[api]"
+
+### Or using pip
+# python -m venv .venv
+# source .venv/bin/activate  # Windows: .venv\Scripts\activate
 # pip install "lightrag-hku[api]"
 
-# Build front-end artifacts
+### Build front-end artifacts
 cd lightrag_webui
 bun install --frozen-lockfile
 bun run build
@@ -141,7 +155,7 @@ source .venv/bin/activate  # Activate the virtual environment (Linux/macOS)
 
 ### Or using pip with virtual environment
 # python -m venv .venv
-### source .venv/bin/activate  # Windows: .venv\Scripts\activate
+# source .venv/bin/activate  # Windows: .venv\Scripts\activate
 # pip install -e ".[api]"
 
 # Build front-end artifacts

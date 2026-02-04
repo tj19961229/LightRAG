@@ -52,12 +52,22 @@
 ---
 
 <div align="center">
-  <a href="https://litewrite.ai" target="_blank">
-    <img src="./assets/LiteWrite.png" width="56" height="56" alt="LiteWrite" style="vertical-align: middle; border-radius: 12px;">
-    <span style="font-size: 18px; font-weight: bold; margin-left: 10px;">体验 LiteWrite — AI 原生 LaTeX 编辑平台</span>
-  </a>
-  <br>
-  <a href="https://litewrite.ai"><img src="https://img.shields.io/badge/🚀%20LiteWrite-AI%20原生%20LaTeX%20编辑器-ff6b6b?style=for-the-badge&logoColor=white&labelColor=1a1a2e"></a>
+  <table>
+    <tr>
+      <td style="vertical-align: middle;">
+        <img src="./assets/LiteWrite.png"
+             width="56"
+             height="56"
+             alt="LiteWrite"
+             style="border-radius: 12px;" />
+      </td>
+      <td style="vertical-align: middle; padding-left: 12px;">
+        <a href="https://litewrite.ai">
+          <img src="https://img.shields.io/badge/🚀%20LiteWrite-AI%20原生%20LaTeX%20编辑器-ff6b6b?style=for-the-badge&logoColor=white&labelColor=1a1a2e">
+        </a>
+      </td>
+    </tr>
+  </table>
 </div>
 
 ---
@@ -110,12 +120,15 @@ LightRAG服务器旨在提供Web UI和API支持。Web UI便于文档索引、知
 * 从PyPI安装
 
 ```bash
-# 使用 uv (推荐)
-uv pip install "lightrag-hku[api]"
-# 或使用 pip
+### 使用 uv 安装 LightRAG 服务器（作为工具，推荐)
+uv tool install "lightrag-hku[api]"
+
+### 或使用 pip
+# python -m venv .venv
+# source .venv/bin/activate  # Windows: .venv\Scripts\activate
 # pip install "lightrag-hku[api]"
 
-# 构建前端代码
+### 构建前端代码
 cd lightrag_webui
 bun install --frozen-lockfile
 bun run build
@@ -141,7 +154,7 @@ source .venv/bin/activate  # 激活虚拟环境 (Linux/macOS)
 
 ### 或使用 pip 和虚拟环境
 # python -m venv .venv
-### source .venv/bin/activate  # Windows: .venv\Scripts\activate
+# source .venv/bin/activate  # Windows: .venv\Scripts\activate
 # pip install -e ".[api]"
 
 # 构建前端代码
@@ -955,6 +968,7 @@ MongoDocStatusStorage       MongoDB
 export NEO4J_URI="neo4j://localhost:7687"
 export NEO4J_USERNAME="neo4j"
 export NEO4J_PASSWORD="password"
+export NEO4J_DATABASE="neo4j" #<----------- 使用 neo4j 社区版 docker 镜像时数据库实例必须为neo4j
 
 # 为 LightRAG 设置日志
 setup_logger("lightrag", level="INFO")
